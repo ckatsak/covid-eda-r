@@ -1,0 +1,91 @@
+\section{Initial Processing}
+
+
+\subsection{Entry Point}
+
+Omitting the shebang declaration, the introductory and documentation comments and the definition of global constants, we begin by importing the libraries upon which there is dependence:
+
+\begin{minted}[linenos = true]{R}
+library(data.table) # for all sorts of processing
+library(lubridate)  # for `mdy()`
+library(ggplot2)    # for plotting
+\end{minted}
+
+The number of external dependencies has been deliberately kept to a minimum, to ease our procedure's reproducibility in the context of the course.
+
+At the bottom of the source code file, we define the entry point of our program.
+This is merely an output width configuration for the case of interactive execution, or a \texttt{main()} function otherwise.
+
+\begin{minted}[linenos = true]{R}
+main <- function() {
+  eda(processing()$dt)
+}
+
+if (interactive()) {
+  options("width" = 120)
+} else {
+  main()
+}
+\end{minted}
+
+
+\subsection{Processing Steps}
+
+Let us start by focusing on the processing of the given dataset following the given instruction steps of the assignment.
+All of the processing has been included in a single R function, \texttt{processing()}.
+
+\begin{minted}[linenos=true, escapeinside=@@]{R}
+processing <- function() {
+  # (Down)load the latest data into a new data.table, excluding some columns
+  exclusions <- c("Province/State", "Lat", "Long")
+  confirmed  <- fread(CONFIRMED_URL, header = TRUE, drop = exclusions)
+  deaths     <- fread(DEATHS_URL,    header = TRUE, drop = exclusions)
+
+  # Appropriately rename the variable related to the country
+  setnames(confirmed, "Country/Region", "Country")
+  setnames(deaths,    "Country/Region", "Country")
+
+  # Reshape each data.table from wide to long format
+  confirmed <- melt(confirmed, id.vars = c("Country"), variable.name = "date",
+                    value.name = "confirmed", variable.factor = FALSE)
+  deaths    <- melt(deaths,    id.vars = c("Country"), variable.name = "date",
+                    value.name = "deaths",    variable.factor = FALSE)
+
+  # Convert each date variable from character to a date object using `mdy()`
+  confirmed <- confirmed[, date := mdy(date)]
+  deaths    <- deaths[   , date := mdy(date)]
+
+  # Group them by (Country, date) summing deaths
+  confirmed <-confirmed[, .(confirmed = sum(confirmed)), by = .(Country, date)]
+  deaths    <-deaths[   , .(deaths    = sum(deaths)),    by = .(Country, date)]
+
+  # Merge the two datasets into one
+  dt <- merge(confirmed, deaths)
+
+  # Calculate the total number of confirmed cases as well as the total number
+  # of deaths, worldwide
+  #
+  # NOTE: Since the recorded data are cumulative, σ(most_recent) -> aggregate
+  confirmed <- sum(dt[date == max(date)][, confirmed])
+  deaths    <- sum(dt[date == max(date)][, deaths])
+
+  # Sort by country and date
+  dt <- dt[order(Country, date)]
+
+  # Calculate daily increases
+  dt[, ":="(
+       confirmed.ind = confirmed - shift(confirmed, 1, type = "lag", fill = 0),
+       deaths.inc    = deaths    - shift(deaths,    1, type = "lag", fill = 0)
+     ),
+     by = .(Country)
+  ]
+
+  # Return the results as a list
+  ret <- list(confirmed, deaths, dt)
+  names(ret) <- c("confirmed", "deaths", "dt")
+  ret
+}
+\end{minted}
+
+Rather than repeating the explanation of the implementation of each step, we have annotated the source code in the above listing with comments that indicate the effects of each of the included statements.
+We explicitly note, however, that step 1 has been merged with the code for the initial retrieval of the data in the beginning of the function, step 3 has preceded step 2 in our implementation, and step 10 leverages \texttt{data.table}'s \texttt{shift()} function specifying the \texttt{type} parameter equal to \texttt{"lag"} (rather than employing the \texttt{lag()} function of the \texttt{stats} package).
